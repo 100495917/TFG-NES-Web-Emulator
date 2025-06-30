@@ -1,0 +1,58 @@
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NES Web emulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <h1>NES Web Emulator</h1>
+    <h4>Work in progress developed by David Mancebo 100495917, UC3M Leganés</h4>
+    <div id="main-container">
+        <div id="game-container">
+            <label for="romInput">Select .nes file:</label>
+            <input type="file" id="romInput" accept=".nes" />
+            <button id="startButton">Start</button>
+            <button id="stepButton">Step</button>
+        </div>
+        <div id="status-container">
+            <div id="register-status">
+                <h2>CPU Register Status</h2>
+                <div id="registers">
+                    <p>A: <span id="A">0x00</span></p>
+                    <p>X: <span id="X">0x00</span></p>
+                    <p>Y: <span id="Y">0x00</span></p>
+                    <p>PC: <span id="P">0xC000</span></p>
+                    <p>SP: <span id="SP">0x00</span></p>
+                    <p>P: <span id="P">0x00</span></p>
+                </div>
+            </div>
+            <div id="program-status">
+                <h2>Program Text segment</h2>
+                <div id="program">
+                    <p>0x0000: 0x00</p>
+                    <p>0x0001: 0x00</p>
+                    <p>0x0002: 0x00</p>
+                    <p>0x0003: 0x00</p>
+                    <p>0x0004: 0x00</p>
+                    <p>0x0005: 0x00</p>
+                    <p>0x0006: 0x00</p>
+                    <p>0x0007: 0x00</p>
+                    <p>0x0008: 0x00</p>
+                </div>
+            </div>
+            <div>
+                <h2>Last Instruction Decoded</h2>
+                <p id="lastInstruction">None</p>
+
+            </div>
+        </div>
+            
+    </div>
+    
+    
+    <script type="module" src="main.js"></script>
+</body>
+
+</html>
