@@ -1,18 +1,20 @@
 import { opcode_matrix } from './decode.js';    // Opcode mattrix for decoding instructions
+import * as execute from './execute.js'; // Functions to execute instructions based on the addressing mode
 
 const romInput = document.getElementById("romInput");
 const startButton = document.getElementById("startButton");
 const stepButton = document.getElementById("stepButton");
 
-let mainMemory = new Uint8Array(0x10000); // 64KB of main CPU memory in a Uint8Array (bytes)
+export let mainMemory = new Uint8Array(0x10000); // 64KB of main CPU memory in a Uint8Array (bytes)
 
-let cpuRegisters = {
+export let cpuRegisters = {
     a: 0, // Accumulator
     x: 0, // X Register
     y: 0, // Y Register
     pc: 0xC000, // Program Counter starts at 0xC000
     sp: 0xFF, // Stack Pointer starts at 0xFF
-    status: 0 // Status Register
+    // Status Register | Flags (bit 7 to bit 0) are N (negative), V (overflow), - (ignored), B (break), D (decimal mode), I (interrupt disable), Z (zero), C (carry)
+    status: 0
 };
 
 startButton.addEventListener("click", readRom);
@@ -90,18 +92,32 @@ function updateCpuDisplay() {
     document.getElementById("A").textContent = `0x${cpuRegisters.a.toString(16).toUpperCase().padStart(2, '0')}`;
     document.getElementById("X").textContent = `0x${cpuRegisters.x.toString(16).toUpperCase().padStart(2, '0')}`;
     document.getElementById("Y").textContent = `0x${cpuRegisters.y.toString(16).toUpperCase().padStart(2, '0')}`;
-    document.getElementById("P").textContent = `0x${cpuRegisters.pc.toString(16).toUpperCase().padStart(4, '0')}`;
+    document.getElementById("PC").textContent = `0x${cpuRegisters.pc.toString(16).toUpperCase().padStart(4, '0')}`;
     document.getElementById("SP").textContent = `0x${cpuRegisters.sp.toString(16).toUpperCase().padStart(2, '0')}`;
+    // Update each bit of the status register in the SR table
+    for (let i = 0; i < 8; i++) {
+        document.getElementById(`SR${i}`).textContent = (cpuRegisters.status & (0x01 << i)) ? '1' : '0';
+    }
 }
 
 stepButton.addEventListener("click", () => {
-    decode();
+    decodeInstruction();
     updateprogramDisplay();
     updateCpuDisplay();
 });
 
-function decode() {
-    const opcode = mainMemory[cpuRegisters.pc];
+function executeInstruction(instruction_name, addressing_mode, ...args) {
+    if (typeof execute[instruction_name] === 'function') {
+        // Get the function operand based on the addressing mode TODO: Should the fetching of the operand be done here or before???
+        const instruction_operand = execute.address_mode_handlers[addressing_mode](args);
+        execute[instruction_name](instruction_operand);
+    } else {
+        console.error(`Function ${instruction_name} not found in execute module.`);
+    }
+}
+
+function decodeInstruction() {
+    const opcode = mainMemory[cpuRegisters.pc]; // Fetch
     const instruction = opcode_matrix[opcode];
 
     if (!instruction) {
@@ -110,26 +126,30 @@ function decode() {
     }
 
     console.log(`Executing instruction: ${instruction.instruction_name} with addressing mode: ${instruction.addressing_mode}`);
-    // execute(); TODO: Implement the execution of the instruction based on the addressing mode
 
     // Update the last instruction display
     if (instruction.size === 1) {
         // Single byte instruction (only opcode)
+        // Increment PC by the size of the instruction
+        cpuRegisters.pc += instruction.size;
+        executeInstruction(instruction.instruction_name, instruction.addressing_mode);
         document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode})`;
     }
     else if (instruction.size === 2) {
         // Two byte instruction (opcode + one byte operand)
         const operand = mainMemory[cpuRegisters.pc + 1];
+        // Increment PC by the size of the instruction
+        cpuRegisters.pc += instruction.size;
+        executeInstruction(instruction.instruction_name, instruction.addressing_mode, operand);
         document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode}) 0x${operand.toString(16).toUpperCase().padStart(2, '0')}`;
     }
     else {
         // Three byte instruction (opcode + two byte operand)
         const operand1 = mainMemory[cpuRegisters.pc + 1];
         const operand2 = mainMemory[cpuRegisters.pc + 2];
+        // Increment PC by the size of the instruction
+        cpuRegisters.pc += instruction.size;
+        executeInstruction(instruction.instruction_name, instruction.addressing_mode, operand1, operand2);
         document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode}) 0x${operand1.toString(16).toUpperCase().padStart(2, '0')} 0x${operand2.toString(16).toUpperCase().padStart(2, '0')}`;
     }
-
-    // Increment PC by the size of the instruction (TODO: should this be done here or in the execute function?)
-    cpuRegisters.pc += instruction.size;
-
 }

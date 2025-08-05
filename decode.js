@@ -6,15 +6,14 @@ class OpCode {
         this.size = size; // Size in bytes from 1 to 3
         // TODO: add cycles needed to execute the instruction for timing purposes
         // this.cycles = cycles;   // Number of cycles needed to execute the instruction
-        // TODO: add function pointers to the instruction/addressing mode combination once implemented
     }
 }
 
-// Opcode matrix for the 6502 CPU as seen in https://www.masswerk.at/6502/6502_instruction_set.html#JSR
+// Opcode matrix for the 6502 CPU as seen in https://www.masswerk.at/6502/6502_instruction_set.html
 // Instruction sizes are also included in the reference
 // Only legal opcodes are included for now
 
-// Addressing modes as described in https://www.masswerk.at/6502/6502_instruction_set.html#JSR:
+// Addressing modes as described in https://www.masswerk.at/6502/6502_instruction_set.html:
 /* 
 A	    Accumulator	                OPC A	        operand is AC (implied single byte instruction)
 abs	    absolute	                OPC $LLHH	    operand is address $HHLL *
