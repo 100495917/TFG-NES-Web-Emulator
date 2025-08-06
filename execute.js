@@ -3,17 +3,17 @@ import { mainMemory } from './main.js';
 
 // Lookup table for addressing mode handlers an their names in the opcode matrix
 export const address_mode_handlers = {
-    "A":    getAccumulator,
-    "abs":  getAbsolute,
+    "A": getAccumulator,
+    "abs": getAbsolute,
     "abs,X": getAbsoluteX,
     "abs,Y": getAbsoluteY,
-    "#":    getImmediate,
+    "#": getImmediate,
     "impl": getImplied,
-    "ind":  getIndirect,
+    "ind": getIndirect,
     "X,ind": getXIndexedIndirect,
     "ind,Y": getIndirectYIndexed,
-    "rel":  getRelative,
-    "zpg":  getZeropage,
+    "rel": getRelative,
+    "zpg": getZeropage,
     "zpg,X": getZeropageXIndexed,
     "zpg,Y": getZeropageYIndexed
 };
@@ -176,7 +176,7 @@ export function ADC(memory_location) {
     cpuRegisters.status = (result > 0xFF) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if overflow
     cpuRegisters.a = result & 0xFF; // Store only the lower byte (ignore carry)
     cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if result is negative
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
 
 }
 
@@ -190,7 +190,7 @@ export function AND(memory_location) {
     const value = mainMemory[memory_location];
     cpuRegisters.a &= value; // Perform AND operation
     cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if result is negative
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
 }
 
 export function ASL(memory_location) {
@@ -203,19 +203,19 @@ export function ASL(memory_location) {
     http://www.6502.org/users/obelisk/6502/reference.html#ASL
     */
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator 
-    if (memory_location === null) {
+    if (memory_location === "accumulator") {
         cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear carry flag
         cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
         cpuRegisters.a = (cpuRegisters.a << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
         cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if result is negative
+        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
     } else {    // Operation is done on the contents of memory_location
         const value = mainMemory[memory_location];
         cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear carry flag
         cpuRegisters.status = (value & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
         mainMemory[memory_location] = (value << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
         cpuRegisters.status = (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
-        cpuRegisters.status = (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if result is negative
+        cpuRegisters.status = (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
     }
 }
 
@@ -330,4 +330,179 @@ export function BVS(displacement) {
         const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
         cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
+}
+
+export function CLC() {
+    /*
+    Clear Carry Flag
+    C = 0
+    Set the carry flag to zero.
+    http://www.6502.org/users/obelisk/6502/reference.html#CLC
+    */
+    cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear bit 0 (carry flag)
+}
+
+export function CLD() {
+    /*
+    Clear Decimal Mode
+    D = 0
+    Set the decimal mode flag to zero.
+    http://www.6502.org/users/obelisk/6502/reference.html#CLD
+    */
+    cpuRegisters.status = cpuRegisters.status & ~0x08; // Clear bit 3 (decimal mode flag)
+}
+
+export function CLI() {
+    /*
+    Clear Interrupt Disable
+    I = 0
+    Clears the interrupt disable flag allowing normal interrupt requests to be serviced.
+    http://www.6502.org/users/obelisk/6502/reference.html#CLI
+    */
+    cpuRegisters.status = cpuRegisters.status & ~0x04; // Clear bit 2 (interrupt disable flag)
+}
+
+export function CLV() {
+    /*
+    Clear Overflow Flag
+    V = 0
+    Clears the overflow flag.
+    http://www.6502.org/users/obelisk/6502/reference.html#CLV
+    */
+    cpuRegisters.status = cpuRegisters.status & ~0x40; // Clear bit 6 (overflow flag)
+}
+
+export function CMP(memory_location) {
+    /*
+    Compare
+    Z,C,N = A-M
+    This instruction compares the contents of the accumulator with another memory held value and sets the zero and carry flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#CMP
+    */
+    const value = mainMemory[memory_location];
+    const result = (cpuRegisters.a - value) & 0xFF; // Subtract memory value from accumulator
+    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if result is non-negative (A >= M)
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero (A === M)
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function CPX(memory_location) {
+    /*
+    Compare X Register
+    Z,C,N = X-M
+    This instruction compares the contents of the X register with another memory held value and sets the zero and carry flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#CPX
+    */
+    const value = mainMemory[memory_location];
+    const result = (cpuRegisters.x - value) & 0xFF; // Subtract memory value from X register
+    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if result is non-negative (A >= M)
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero (A === M)
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function CPY(memory_location) {
+    /*
+    Compare Y Register
+    Z,C,N = Y-M
+    This instruction compares the contents of the Y register with another memory held value and sets the zero and carry flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#CPY
+    */
+    const value = mainMemory[memory_location];
+    const result = (cpuRegisters.y - value) & 0xFF; // Subtract memory value from Y register
+    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if result is non-negative (A >= M)
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero (A === M)
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function DEC(memory_location) {
+    /*
+    Decrement Memory
+    M,Z,N = M-1
+    Subtracts one from the value held at a specified memory location setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#DEC
+    */
+    const value = mainMemory[memory_location];
+    const result = (value - 1) & 0xFF; // Subtract 1 from memory value (wraps around from 0x00 to 0xFF)
+    mainMemory[memory_location] = result; // Store result in original memory location
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function DEX() {
+    /*
+    Decrement X Register
+    X,Z,N = X-1
+    Subtracts one from the X register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#DEX
+    */
+    const result = (cpuRegisters.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
+    cpuRegisters.x = result; // Store result in X register
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function DEY() {
+    /*
+    Decrement Y Register
+    Y,Z,N = Y-1
+    Subtracts one from the Y register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#DEY
+    */
+    const result = (cpuRegisters.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
+    cpuRegisters.y = result; // Store result in Y register
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function EOR(memory_location) {
+    /*
+    Exclusive OR
+    A,Z,N = A^M
+    An exclusive OR is performed, bit by bit, on the accumulator contents using the contents of a byte of memory.
+    http://www.6502.org/users/obelisk/6502/reference.html#EOR
+    */
+    const value = mainMemory[memory_location];
+    cpuRegisters.a ^= value; // Perform XOR operation
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function INC(memory_location) {
+    /*
+    Increment Memory
+    M,Z,N = M+1
+    Adds one to the value held at a specified memory location setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#INC
+    */
+    const value = mainMemory[memory_location];
+    const result = (value + 1) & 0xFF; // Subtract 1 from memory value (wraps around from 0xFF to 0x00)
+    mainMemory[memory_location] = result; // Store result in original memory location
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function INX() {
+    /*
+    Increment X Register
+    X,Z,N = X+1
+    Adds one to the X register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#INX
+    */
+    const result = (cpuRegisters.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
+    cpuRegisters.x = result; // Store result in X register
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function INY() {
+    /*
+    Increment Y Register
+    Y,Z,N = Y+1
+    Adds one to the Y register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#INY
+    */
+    const result = (cpuRegisters.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
+    cpuRegisters.y = result; // Store result in Y register
+    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
 }
