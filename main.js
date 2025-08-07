@@ -66,6 +66,10 @@ function loadRom(romData) {
     cpuRegisters.pc = mainMemory[0xFFFC] | (mainMemory[0xFFFD] << 8);
     console.log('Program Counter initialized to:', cpuRegisters.pc.toString(16).toUpperCase());
 
+    // Initialize Stack Pointer to 0xFF (descending stack)
+    cpuRegisters.sp = 0xFF;
+    console.log('Stack Pointer initialized to:', cpuRegisters.sp.toString(16).toUpperCase());
+
     updateprogramDisplay();
     updateCpuDisplay();
 }

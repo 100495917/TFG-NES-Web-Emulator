@@ -99,8 +99,11 @@ export function getIndirect(operand1, operand2) {
     operand is address; effective address is contents of word at address: C.w($HHLL)
     return the 16 bit address obtained from the memory address formed by combining the two bytes after shifting the second byte left by 8 bits
     */
-    const address = ((operand2 << 8) | operand1) & 0xFFFF; // Address of the LSB of the word
-    return (mainMemory[address] | (mainMemory[(address + 1) & 0xFFFF] << 8)) & 0xFFFF; // Read the word from memory and shift the MSB (at address+1) left by 8 bits
+    const addressL = ((operand2 << 8) | operand1) & 0xFFFF; // Address of the LSB of the word
+    // Note: In the address of the high byte the LSB (operand1) is wrapped around at 0xFF to replicate a hardware bug in the 6502
+    //       where the in a page boundary were incorrectly fecthed as explained in http://www.6502.org/users/obelisk/6502/reference.html#JMP
+    const addressH = ((operand2 << 8) | ((operand1 + 1) & 0xFF)) & 0xFFFF; // Address of the MSB of the word
+    return ((mainMemory[addressH] << 8) | mainMemory[addressL]) & 0xFFFF; // Read the word from memory and shift the MSB left by 8 bits
 }
 
 export function getXIndexedIndirect(operand) {
@@ -204,14 +207,12 @@ export function ASL(memory_location) {
     */
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator 
     if (memory_location === "accumulator") {
-        cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear carry flag
         cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
         cpuRegisters.a = (cpuRegisters.a << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
         cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
         cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
     } else {    // Operation is done on the contents of memory_location
         const value = mainMemory[memory_location];
-        cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear carry flag
         cpuRegisters.status = (value & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
         mainMemory[memory_location] = (value << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
         cpuRegisters.status = (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
@@ -506,3 +507,117 @@ export function INY() {
     cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
     cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
 }
+
+export function JMP(memory_location) {
+    /*
+    Jump
+    PC = $HHLL
+    Sets the program counter to the address specified by the operand.
+    http://www.6502.org/users/obelisk/6502/reference.html#JMP
+    */
+    cpuRegisters.pc = memory_location & 0xFFFF; // Ensure it wraparound at 0xFFFF
+}
+
+export function JSR(memory_location) {
+    /*
+    Jump to Subroutine
+    The JSR instruction pushes the address (minus one) of the return point on to the stack and then sets the program counter to the target memory address.
+    http://www.6502.org/users/obelisk/6502/reference.html#JSR
+    */
+    // The 6502 stores the return address minus one (last byte of the JSR isntruction) on the stack
+    // This is because of the internal working of the 6502, which stores the current PC before fetching the last byte of the JSR instruction,
+    // as seen in 1976 MCS 6500 Family Programming Manual (*1) in section 8.1 JSR - Jump to Subroutine p.106..109
+    // https://archive.org/details/6500-50a_mcs6500pgmmanjan76/page/n121/mode/2up?view=theater 
+    const returnAddress = (cpuRegisters.pc - 1) & 0xFFFF;
+
+    // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack (the stack pointer points to the element where the next value will be stored)
+    // The stack pointer is an 8-bit resgister that contains the LSB of the stack address (0x0100 + SP)
+    // https://www.nesdev.org/wiki/Stack
+    mainMemory[0x0100 + cpuRegisters.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpuRegisters.sp] = returnAddress & 0xFF; // Push low byte of return address
+    cpuRegisters.pc = memory_location & 0xFFFF; // Set PC to the target memory address
+}
+
+export function LDA(memory_location) {
+    /*
+    Load Accumulator
+    A,Z,N = M
+    Loads a byte of memory into the accumulator setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#LDA
+    */
+    const value = mainMemory[memory_location];
+    cpuRegisters.a = value; // Store in accumulator
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value stored is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value stored is set
+}
+
+export function LDX(memory_location) {
+    /*
+    Load X Register
+    X,Z,N = M
+    Loads a byte of memory into the X register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#LDX
+    */
+    const value = mainMemory[memory_location];
+    cpuRegisters.x = value; // Store in X register
+    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value stored is zero
+    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value stored is set
+}
+
+export function LDY(memory_location) {
+    /*
+    Load Y Register
+    Y,Z,N = M
+    Loads a byte of memory into the Y register setting the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#LDY
+    */
+    const value = mainMemory[memory_location];
+    cpuRegisters.y = value; // Store in Y register
+    cpuRegisters.status = (cpuRegisters.y === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value stored is zero
+    cpuRegisters.status = (cpuRegisters.y & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value stored is set
+}
+
+export function LSR(memory_location) {
+    /*
+    Logical Shift Right
+    A,Z,C,N = M/2 or M,Z,C,N = M/2
+    Each of the bits in A or M is shift one place to the right. The bit that was in bit 0 is shifted into the carry flag. Bit 7 is set to zero.
+    http://www.6502.org/users/obelisk/6502/reference.html#LSR
+    */
+    // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator 
+    if (memory_location === "accumulator") {
+        cpuRegisters.status = (cpuRegisters.a & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 0 is set
+        cpuRegisters.a = (cpuRegisters.a >> 1) & 0xFF;  // Shift one bit right
+        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    } else {    // Operation is done on the contents of memory_location
+        const value = mainMemory[memory_location];
+        cpuRegisters.status = (value & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 0 is set
+        mainMemory[memory_location] = (value >> 1) & 0xFF;  // Shift one bit right
+        cpuRegisters.status = (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    }
+}
+
+export function NOP() {
+    /*
+    No Operation
+    The NOP instruction causes no changes to the processor other than the normal incrementing of the program counter to the next instruction.
+    http://www.6502.org/users/obelisk/6502/reference.html#NOP
+    */
+}
+
+export function ORA(memory_location) {
+    /*
+    Logical Inclusive OR
+    A,Z,N = A|M
+    An inclusive OR is performed, bit by bit, on the accumulator contents using the contents of a byte of memory.
+    http://www.6502.org/users/obelisk/6502/reference.html#ORA
+    */
+    const value = mainMemory[memory_location];
+    cpuRegisters.a |= value; // Perform OR operation
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
