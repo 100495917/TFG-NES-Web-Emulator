@@ -173,14 +173,23 @@ export function ADC(memory_location) {
     This instruction adds the contents of a memory location to the accumulator together with the carry bit.
     If overflow occurs the carry bit is set, this enables multiple byte addition to be performed.
     http://www.6502.org/users/obelisk/6502/reference.html#ADC
+    Note: The original 6502 does support decimal mode for this instruction, but the NES 6502 does not, so it is not implemented here.
     */
     const value = mainMemory[memory_location];
-    const result = cpuRegisters.a + value + (cpuRegisters.status & 0x01); // Add accumulator, value of memory_location and carry if set
-    cpuRegisters.status = (result > 0xFF) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if overflow
-    cpuRegisters.a = result & 0xFF; // Store only the lower byte (ignore carry)
+    const carry = (cpuRegisters.status & 0x01) ? 1 : 0;
+    const result = cpuRegisters.a + value + carry; // Add accumulator, value of memory_location and carry
+    cpuRegisters.status = (result > 0xFF) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if overflow in bit 7
+    result &= 0xFF; // Save only the lower byte (ignore carry) to keep the 2's complement representation of the result
+    // When adding 2's complement numbers an overflow happens if A and M have the same sign but the sign of the result is different
+    // Doing an XOR with the 7th bit of 2 values will result in 0 if they have the same sign and 0x80 if their sign is different
+    if ((((cpuRegisters.a ^ value) & 0x80) === 0) && (((cpuRegisters.a ^ result) & 0x80) !== 0)) {
+        cpuRegisters.status |= 0x40;    // Set overflow flag if overflow occurs 
+    } else {
+        cpuRegisters.status &= ~0x40;   // Clear overflow flag if no overflow
+    }
+    cpuRegisters.a = result;
     cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
     cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
-
 }
 
 export function AND(memory_location) {
@@ -621,3 +630,254 @@ export function ORA(memory_location) {
     cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
 }
 
+export function PHA() {
+    /*
+    Push Accumulator
+    Pushes a copy of the accumulator on to the stack.
+    http://www.6502.org/users/obelisk/6502/reference.html#PHA
+    */
+    // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack (the stack pointer points to the element where the next value will be stored)
+    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.a; // Push accumulator
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+}
+
+export function PHP() {
+    /*
+    Push Processor Status
+    Pushes a copy of the status flags on to the stack.
+    http://www.6502.org/users/obelisk/6502/reference.html#PHP
+    */
+    // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack (the stack pointer points to the element where the next value will be stored)
+    // Set bit 4 (break flag) and bit 5 (ignored) to 1 (https://www.masswerk.at/6502/6502_instruction_set.html#PHP)
+    cpuRegisters.status |= 0x30;    // Set break flag and ignored bit (or with 00110000 = 0x30)
+    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.status; // Push status register
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+}
+
+export function PLA() {
+    /*
+    Pull Accumulator
+    Pulls an 8 bit value from the stack and into the accumulator. The zero and negative flags are set as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#PLA
+    */
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpuRegisters.a = mainMemory[0x0100 + cpuRegisters.sp]; // Pull accumulator
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value pulled is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value pulled is set
+}
+
+export function PLP() {
+    /*
+    Pull Processor Status
+    Pulls an 8 bit value from the stack and into the processor flags. The flags will take on new states as determined by the value pulled.
+    http://www.6502.org/users/obelisk/6502/reference.html#PLP
+    */
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpuRegisters.status = (mainMemory[0x0100 + cpuRegisters.sp]) & ~0x30; // Pull status register ignoring the break flag and ignored bit (https://www.masswerk.at/6502/6502_instruction_set.html#PLP)
+}
+
+export function ROL(memory_location) {
+    /*
+    Rotate Left
+    Move each of the bits in either A or M one place to the left. Bit 0 is filled with the current value of the carry flag whilst the old bit 7 becomes the new carry flag value.
+    http://www.6502.org/users/obelisk/6502/reference.html#ROL
+    */
+    const carry = cpuRegisters.status & 0x01;  // Store carry flag to set it to bit 0 of the result later
+    // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator 
+    if (memory_location === "accumulator") {
+        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
+        cpuRegisters.a = (cpuRegisters.a << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
+        cpuRegisters.a |= carry;   // Set bit 0 to previous carry flag
+        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    } else {    // Operation is done on the contents of memory_location
+        const value = mainMemory[memory_location];
+        cpuRegisters.status = (value & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 7 is set
+        mainMemory[memory_location] = (value << 1) & 0xFF;  // Shift one bit left and store only the lower byte (ignore carry)
+        mainMemory[memory_location] |= carry;   // Set bit 0 to previous carry flag
+        cpuRegisters.status = (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    }
+}
+
+export function ROR(memory_location) {
+    /*
+    Rotate Right
+    Move each of the bits in either A or M one place to the left. Bit 0 is filled with the current value of the carry flag whilst the old bit 7 becomes the new carry flag value.
+    http://www.6502.org/users/obelisk/6502/reference.html#ROR
+    */
+    const carry = cpuRegisters.status & 0x01;
+    // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator 
+    if (memory_location === "accumulator") {
+        cpuRegisters.status = (cpuRegisters.a & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 0 is set
+        cpuRegisters.a = (cpuRegisters.a >> 1) & 0xFF;  // Shift one bit right
+        cpuRegisters.a |= (carry << 7);   // Set bit 7 to previous carry flag
+        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    } else {    // Operation is done on the contents of memory_location
+        const value = mainMemory[memory_location];
+        cpuRegisters.status = (value & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01); // Set carry flag if bit 0 is set
+        mainMemory[memory_location] = (value >> 1) & 0xFF;  // Shift one bit right
+        mainMemory[memory_location] |= (carry << 7);   // Set bit 7 to previous carry flag
+        cpuRegisters.status = (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+        cpuRegisters.status = (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+    }
+}
+
+// TODO: RTI
+//TODO: RTS
+
+export function SBC(memory_location) {
+    /*
+    Subtract with Carry
+    A,Z,C,N = A-M-(1-C)
+    This instruction subtracts the contents of a memory location to the accumulator together with the not of the carry bit. If overflow occurs the carry bit is clear, this enables multiple byte subtraction to be performed.
+    http://www.6502.org/users/obelisk/6502/reference.html#SBC
+    Note: The original 6502 does support decimal mode for this instruction, but the NES 6502 does not, so it is not implemented here.
+    */
+    const value = mainMemory[memory_location];
+    const carry = (cpuRegisters.status & 0x01) ? 1 : 0;
+    const result = cpuRegisters.a - value - (1 - carry); // Substract value of memory_location and carry from accumulator
+    cpuRegisters.status = (result < 0x00) ? (cpuRegisters.status & ~0x01) : (cpuRegisters.status | 0x01); // Clear carry flag if overflow in bit 7 (negative binary result)
+    result &= 0xFF; // Save only the lower byte (ignore carry) to keep the 2's complement representation of the result
+    // When substracting 2's complement numbers an overflow happens if A and M have different sign and the sign of the result different from A
+    // Doing an XOR with the 7th bit of 2 values will result in 0 if they have the same sign and 0x80 if their sign is different
+    if ((((cpuRegisters.a ^ value) & 0x80) !== 0) && (((cpuRegisters.a ^ result) & 0x80) !== 0)) {
+        cpuRegisters.status |= 0x40;    // Set overflow flag if overflow occurs 
+    } else {
+        cpuRegisters.status &= ~0x40;   // Clear overflow flag if no overflow
+    }
+    cpuRegisters.a = result;
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if result is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the result is set
+}
+
+export function SEC() {
+    /*
+    Set Carry Flag
+    C = 1
+    Set the carry flag to one.
+    http://www.6502.org/users/obelisk/6502/reference.html#SEC
+    */
+    cpuRegisters.status = cpuRegisters.status | 0x01; // Set bit 0 (carry flag)
+}
+
+export function SED() {
+    /*
+    Set Decimal Flag
+    D = 1
+    Set the decimal mode flag to one.
+    http://www.6502.org/users/obelisk/6502/reference.html#SED
+    */
+    cpuRegisters.status = cpuRegisters.status | 0x08; // Set bit 3 (decimal mode flag)
+}
+
+export function SEI() {
+    /*
+    Set Interrupt Disable
+    I = 1
+    Set the interrupt disable flag to one.
+    http://www.6502.org/users/obelisk/6502/reference.html#SEI
+    */
+    cpuRegisters.status = cpuRegisters.status | 0x04; // Set bit 2 (interrupt disable flag)
+}
+
+export function STA(memory_location) {
+    /*
+    Store Accumulator
+    M = A
+    Stores the contents of the accumulator into memory.
+    http://www.6502.org/users/obelisk/6502/reference.html#STA
+    */
+    mainMemory[memory_location] = cpuRegisters.a;
+}
+
+export function STX(memory_location) {
+    /*
+    Store X Register
+    M = X
+    Stores the contents of the X register into memory.
+    http://www.6502.org/users/obelisk/6502/reference.html#STX
+    */
+    mainMemory[memory_location] = cpuRegisters.x;
+}
+
+export function STY(memory_location) {
+    /*
+    Store Y Register
+    M = Y
+    Stores the contents of the Y register into memory.
+    http://www.6502.org/users/obelisk/6502/reference.html#STY
+    */
+    mainMemory[memory_location] = cpuRegisters.y;
+}
+
+export function TAX() {
+    /*
+    Transfer Accumulator to X
+    X = A
+    Copies the current contents of the accumulator into the X register and sets the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#TAX
+    */
+    cpuRegisters.x = cpuRegisters.a;
+    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
+    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
+}
+
+export function TAY() {
+    /*
+    Transfer Accumulator to Y
+    Y = A
+    Copies the current contents of the accumulator into the Y register and sets the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#TAY
+    */
+    cpuRegisters.y = cpuRegisters.a;
+    cpuRegisters.status = (cpuRegisters.y === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
+    cpuRegisters.status = (cpuRegisters.y & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
+}
+
+export function TSX() {
+    /*
+    Transfer Stack Pointer to X
+    X = S
+    Copies the current contents of the stack register into the X register and sets the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#TSX
+    */
+    cpuRegisters.x = cpuRegisters.sp;
+    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
+    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
+}
+
+export function TXA() {
+    /*
+    Transfer X to Accumulator
+    A = X
+    Copies the current contents of the X register into the accumulator and sets the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#TXA
+    */
+    cpuRegisters.a = cpuRegisters.x;
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
+}
+
+export function TXS() {
+    /*
+    Transfer X to Stack Pointer
+    S = X
+    Copies the current contents of the X register into the stack register.
+    http://www.6502.org/users/obelisk/6502/reference.html#TXS
+    */
+    cpuRegisters.sp = cpuRegisters.x; // Store X register in stack pointer
+}
+
+export function TYA() {
+    /*
+    Transfer Y to Accumulator
+    A = Y
+    Copies the current contents of the Y register into the accumulator and sets the zero and negative flags as appropriate.
+    http://www.6502.org/users/obelisk/6502/reference.html#TYA
+    */
+    cpuRegisters.a = cpuRegisters.y;
+    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
+    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
+}
