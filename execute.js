@@ -316,7 +316,31 @@ export function BPL(displacement) {
     }
 }
 
-// export function BRK TODO: interrumpts
+export function BRK() {
+    /*
+    Force Interrupt
+    The BRK instruction forces the generation of an interrupt request. The program counter and processor status are pushed on the stack then the IRQ interrupt vector at $FFFE/F is loaded into the PC and the break flag in the status set to one.
+    http://www.6502.org/users/obelisk/6502/reference.html#BRK
+    */
+    // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack (the stack pointer points to the element where the next value will be stored)
+    // The stack pointer is an 8-bit resgister that contains the LSB of the stack address (0x0100 + SP)
+    // https://www.nesdev.org/wiki/Stack
+    const returnAddress = (cpuRegisters.pc + 1) & 0xFFFF; // There is always a padding byte after BRK instructions so the return address is the current PC + 1 (second byte after BRK)
+    // Note: I found no reference to the order in which PC + 1 is pushed (HHLL or LLHH), but https://mirrors.apple2.org.za/ftp.apple.asimov.net/documentation/hardware/processors/MCS6500%20Family%20Programming%20Manual.pdf
+    //       states that in the RTI instruction the return address is popped in the order LL HH, so I will assume that BRK pushes it in order HH LL
+    mainMemory[0x0100 + cpuRegisters.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpuRegisters.sp] = returnAddress & 0xFF; // Push low byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    cpuRegisters.status |= 0x10; // Set break flag (bit 4) in status register
+    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.status; // Push status register
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+
+    const interrupt_address_low = mainMemory[0xFFFE]; // Read low byte of IRQ interrupt vector
+    const interrupt_address_high = mainMemory[0xFFFF]; // Read high byte of IRQ interrupt vector
+    const interrupt_handler_address = (interrupt_address_high << 8) | interrupt_address_low; // Combine the two bytes to form the address
+    cpuRegisters.pc = interrupt_handler_address & 0xFFFF; // Set PC to the target memory address
+}
 
 export function BVC(displacement) {
     /*
@@ -545,6 +569,7 @@ export function JSR(memory_location) {
     mainMemory[0x0100 + cpuRegisters.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
     cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
     mainMemory[0x0100 + cpuRegisters.sp] = returnAddress & 0xFF; // Push low byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
     cpuRegisters.pc = memory_location & 0xFFFF; // Set PC to the target memory address
 }
 
@@ -724,8 +749,38 @@ export function ROR(memory_location) {
     }
 }
 
-// TODO: RTI
-//TODO: RTS
+export function RTI() {
+    /*
+    Return from Interrupt
+    The RTI instruction is used at the end of an interrupt processing routine. It pulls the processor flags from the stack followed by the program counter.
+    http://www.6502.org/users/obelisk/6502/reference.html#RTI
+    */
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpuRegisters.status = (mainMemory[0x0100 + cpuRegisters.sp]) & ~0x30; // Pull status register ignoring the break flag and ignored bit (https://www.masswerk.at/6502/6502_instruction_set.html#RTI)
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
+    const PC_low = mainMemory[0x0100 + cpuRegisters.sp]; // Pull low byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
+    const PC_high = mainMemory[0x0100 + cpuRegisters.sp]; // Pull high byte of return address
+    cpuRegisters.pc = ((PC_high << 8) | PC_low) & 0xFFFF; // Set program counter to the return address
+}
+
+export function RTS() {
+    /*
+    Return from Subroutine
+    The RTS instruction is used at the end of a subroutine to return to the calling routine. It pulls the program counter (minus one) from the stack.
+    http://www.6502.org/users/obelisk/6502/reference.html#RTS
+    */
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    const PC_low = mainMemory[0x0100 + cpuRegisters.sp]; // Pull low byte of return address
+    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
+    const PC_high = mainMemory[0x0100 + cpuRegisters.sp]; // Pull high byte of return address
+    cpuRegisters.pc = ((PC_high << 8) | PC_low) & 0xFFFF; // Set program counter to the return address
+    // The PC pulled needs to be incremented by 1 to point to the next instruction after the RTS
+    // This is explained in the JSR instruction, which pushes the return address minus one (last byte of the RTS instruction) due to the internal working of the 6502,
+    // as seen in 1976 MCS 6500 Family Programming Manual (*1) in section 8.1 JSR - Jump to Subroutine p.106..109
+    // https://archive.org/details/6500-50a_mcs6500pgmmanjan76/page/n121/mode/2up?view=theater
+    cpuRegisters.pc = (cpuRegisters.pc + 1) & 0xFFFF;
+}
 
 export function SBC(memory_location) {
     /*
@@ -881,3 +936,4 @@ export function TYA() {
     cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02); // Set zero flag if value transfered is zero
     cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80); // Set negative flag if bit 7 of the value transfered is set
 }
+
