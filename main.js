@@ -13,7 +13,8 @@ export let cpuRegisters = {
     y: 0, // Y Register
     pc: 0xC000, // Program Counter starts at 0xC000
     sp: 0xFF, // Stack Pointer starts at 0xFF
-    // Status Register | Flags (bit 7 to bit 0) are N (negative), V (overflow), - (ignored), B (break), D (decimal mode), I (interrupt disable), Z (zero), C (carry)
+    // Status Register Flags, bit 7 to bit 0 are:
+    // N (negative), V (overflow), - (ignored), B (break), D (decimal mode), I (interrupt disable), Z (zero), C (carry)
     status: 0
 };
 
@@ -54,9 +55,10 @@ function readRom() {
 }
 
 function loadRom(romData) {
-    // TODO: Check ROM header for PGR-ROM size and load accordingly, for now I assume roms are 16KB/32KB PGR-ROM and 8KB CHR-ROM
+    // TODO: Check ROM header for PGR-ROM size and load accordingly,
+    // for now I assume roms are 16KB/32KB PGR-ROM and 8KB CHR-ROM
 
-    let loadAddress = 0x10000 - romData.length; // Load ROM at the end of CPU memory space
+    const loadAddress = 0x10000 - romData.length; // Load ROM at the end of CPU memory space
     console.log(romData.length, 'bytes to load into memory.');
     console.log(`Loading ROM into memory at address 0x${loadAddress.toString(16).toUpperCase()}`);
     mainMemory.set(romData, loadAddress);
@@ -82,7 +84,7 @@ function updateprogramDisplay() {
     for (let i = cpuRegisters.pc - 4; i <= cpuRegisters.pc + 4; i++) {
         const addr = `0x${i.toString(16).toUpperCase().padStart(4, '0')}`;
         const value = `0x${mainMemory[i].toString(16).toUpperCase().padStart(2, '0')}`;
-        if (i == cpuRegisters.pc) {
+        if (i === cpuRegisters.pc) {
             // Highlight the PC address with bold font and red color
             programDisplay.innerHTML += `<p style="color: red"><strong>${addr}: ${value}</strong></p>`;
         } else {
@@ -112,7 +114,8 @@ stepButton.addEventListener("click", () => {
 
 function executeInstruction(instruction_name, addressing_mode, ...args) {
     if (typeof execute[instruction_name] === 'function') {
-        // Get the function operand based on the addressing mode TODO: Should the fetching of the operand be done here or before???
+        // Get the function operand based on the addressing mode
+        // TODO: Should the fetching of the operand be done here or before???
         const instruction_operand = execute.address_mode_handlers[addressing_mode](args);
         execute[instruction_name](instruction_operand);
     } else {
@@ -129,7 +132,7 @@ function decodeInstruction() {
         return;
     }
 
-    console.log(`Executing instruction: ${instruction.instruction_name} with addressing mode: ${instruction.addressing_mode}`);
+    console.log(`Executing instruction: ${instruction.instruction_name} with addrmode: ${instruction.addressing_mode}`);
 
     // Update the last instruction display
     if (instruction.size === 1) {
@@ -137,7 +140,8 @@ function decodeInstruction() {
         // Increment PC by the size of the instruction
         cpuRegisters.pc += instruction.size;
         executeInstruction(instruction.instruction_name, instruction.addressing_mode);
-        document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode})`;
+        document.getElementById("lastInstruction").textContent =
+            `${instruction.instruction_name} (${instruction.addressing_mode})`;
     }
     else if (instruction.size === 2) {
         // Two byte instruction (opcode + one byte operand)
@@ -145,7 +149,9 @@ function decodeInstruction() {
         // Increment PC by the size of the instruction
         cpuRegisters.pc += instruction.size;
         executeInstruction(instruction.instruction_name, instruction.addressing_mode, operand);
-        document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode}) 0x${operand.toString(16).toUpperCase().padStart(2, '0')}`;
+        document.getElementById("lastInstruction").textContent =
+            `${instruction.instruction_name} (${instruction.addressing_mode}) 
+            0x${operand.toString(16).toUpperCase().padStart(2, '0')}`;
     }
     else {
         // Three byte instruction (opcode + two byte operand)
@@ -154,6 +160,9 @@ function decodeInstruction() {
         // Increment PC by the size of the instruction
         cpuRegisters.pc += instruction.size;
         executeInstruction(instruction.instruction_name, instruction.addressing_mode, operand1, operand2);
-        document.getElementById("lastInstruction").textContent = `${instruction.instruction_name} (${instruction.addressing_mode}) 0x${operand1.toString(16).toUpperCase().padStart(2, '0')} 0x${operand2.toString(16).toUpperCase().padStart(2, '0')}`;
+        document.getElementById("lastInstruction").textContent =
+            `${instruction.instruction_name} (${instruction.addressing_mode}) 
+            0x${operand1.toString(16).toUpperCase().padStart(2, '0')} 
+            0x${operand2.toString(16).toUpperCase().padStart(2, '0')}`;
     }
 }
