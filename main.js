@@ -2,8 +2,12 @@ import { opcode_matrix } from './decode.js';    // Opcode mattrix for decoding i
 import * as execute from './execute.js'; // Functions to execute instructions based on the addressing mode
 
 const romInput = document.getElementById("romInput");
-const startButton = document.getElementById("startButton");
+const loadButton = document.getElementById("loadButton");
+const runButton = document.getElementById("runButton");
+const stopButton = document.getElementById("stopButton");
 const stepButton = document.getElementById("stepButton");
+const cycleButton = document.getElementById("cycleButton");
+const totalCyclesDisplay = document.getElementById("totalCycles");
 
 export let mainMemory = new Uint8Array(0x10000); // 64KB of main CPU memory in a Uint8Array (bytes)
 
@@ -18,7 +22,12 @@ export let cpuRegisters = {
     status: 0
 };
 
-startButton.addEventListener("click", readRom);
+let currentInstructionCycles = 0;   // Cycles remaining for the current instruction to execute
+let totalCycles = 0;
+
+let romLoaded = false; // Flag to check if a ROM has been loaded to avoid executing instructions without a ROM
+
+loadButton.addEventListener("click", readRom);
 
 function readRom() {
     // Input file reading, validation and processing (removing header and last 8KB of CHR-ROM)
@@ -74,6 +83,7 @@ function loadRom(romData) {
 
     updateprogramDisplay();
     updateCpuDisplay();
+    romLoaded = true;
 }
 
 function updateprogramDisplay() {
@@ -106,11 +116,68 @@ function updateCpuDisplay() {
     }
 }
 
-stepButton.addEventListener("click", () => {
-    decodeInstruction();
-    updateprogramDisplay();
-    updateCpuDisplay();
+let runInterval = null;
+
+runButton.addEventListener("click", () => {
+    if (!romLoaded) {
+        alert("Please load a ROM before running the emulator.");
+        return;
+    }
+
+    if (!runInterval) {
+        // Execute CPU cycles at 1ms intervals (TODO: adjust interval for 60 FPS emulation once PPU is implemented)
+        runInterval = setInterval(() => {
+            cpuCycle();
+            // TODO: implement PPU cycles (ppu clock frequency is 3 times the CPU clock frequency)
+            // ppuCycle();
+            // ppuCycle();
+            // ppuCycle();
+        }, 1);
+    }
 });
+
+// Button to stop the execution interval loop
+stopButton.addEventListener("click", () => {
+    if (runInterval) {
+        clearInterval(runInterval);
+        runInterval = null;
+    }
+});
+
+stepButton.addEventListener("click", () => {
+    if (!romLoaded) {
+        alert("Please load a ROM before executing instructions.");
+        return;
+    }
+    // Run a single CPU cycle and keep executing until the current instruction is fully executed
+    do {
+        cpuCycle();
+    } while (currentInstructionCycles > 0);
+});
+
+cycleButton.addEventListener("click", () => {
+    if (!romLoaded) {
+        alert("Please load a ROM before executing cycles.");
+        return;
+    }
+    // Run a single CPU cycle
+    cpuCycle();
+});
+
+// Function to execute a single CPU cycle (since instructions are not implemented at a cycle level the whole instruction
+// is executed and the next calls to cpuCycle will not run a new instruction until the function is run as many times as
+// the cycles needed for the instruction to finish in real hardware)
+function cpuCycle() {
+    if (currentInstructionCycles === 0) {
+        // Decode and execute the next instruction
+        decodeInstruction();
+        updateprogramDisplay();
+        updateCpuDisplay();
+    }
+    currentInstructionCycles--;
+    totalCycles++;
+    totalCyclesDisplay.textContent = totalCycles;
+}
 
 function executeInstruction(instruction_name, addressing_mode, ...args) {
     if (typeof execute[instruction_name] === 'function') {
@@ -133,6 +200,7 @@ function decodeInstruction() {
     }
 
     console.log(`Executing instruction: ${instruction.instruction_name} with addrmode: ${instruction.addressing_mode}`);
+    currentInstructionCycles = instruction.cycles;  // Set the cycles for the current instruction to finish execution
 
     // Update the last instruction display
     if (instruction.size === 1) {

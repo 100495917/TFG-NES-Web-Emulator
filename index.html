@@ -13,12 +13,15 @@
         <div id="game-container">
             <label for="romInput">Select .nes file:</label>
             <input type="file" id="romInput" accept=".nes" />
-            <button id="startButton">Start</button>
-            <button id="stepButton">Step</button>
+            <button id="loadButton">Load ROM</button>
+            <button id="runButton">Run</button>
+            <button id="stopButton">Stop</button>
+            <button id="stepButton">Step Instruction</button>
+            <button id="cycleButton">Step Cycle</button>
         </div>
         <div id="status-container">
             <div id="register-status">
-                <h2>CPU Register Status</h2>
+                <h3>CPU Register Status</h3>
                 <div id="registers">
                     <p>A: <span id="A">0x00</span></p>
                     <p>X: <span id="X">0x00</span></p>
@@ -51,7 +54,7 @@
                 </div>
             </div>
             <div id="program-status">
-                <h2>Program Text segment</h2>
+                <h3>Program Text segment</h3>
                 <div id="program">
                     <p>0x0000: 0x00</p>
                     <p>0x0001: 0x00</p>
@@ -65,7 +68,8 @@
                 </div>
             </div>
             <div>
-                <h2>Last Instruction Decoded</h2>
+                <h3>Total CPU Cycles: <span id="totalCycles">0</span></h3>
+                <h3>Last Instruction Decoded</h3>
                 <p id="lastInstruction">None</p>
 
             </div>
