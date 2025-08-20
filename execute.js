@@ -1,8 +1,8 @@
-import { cpuRegisters } from './main.js';
+import { cpu } from './main.js';
 import { mainMemory } from './main.js';
 
 // Lookup table for addressing mode handlers an their names in the opcode matrix
-export const address_mode_handlers = {
+export const addressModeHandlers = {
     "A": getAccumulator,
     "abs": getAbsolute,
     "abs,X": getAbsoluteX,
@@ -69,7 +69,16 @@ export function getAbsoluteX(operand1, operand2) {
     operand is address; effective address is address incremented by X with carry
     Return the 16-bit address formed by combining the two bytes after shifting the second left by 8 bits and adding X
     */
-    return (((operand2 << 8) | operand1) + cpuRegisters.x) & 0xFFFF;   // Ensure it wraps around at 0xFFFF
+    const lowerByte = operand1 + cpu.x; // Add X to the lower byte
+    // Since read instructions that use Absolute X addressing mode have a 1 cycle penalty if the page boundary is
+    // crossed due to having to perform an extra read, we need to check if the addition of X to the low byte of the base
+    // address causes a carry
+    const carry = (lowerByte > 0xFF) ? 1 : 0; // Check if there is a carry (page boundary crossed)
+    const higherByte = (operand2 + carry) & 0xFF; // Add carry to the higher byte in case of page boundary crossing
+    // Combine the two bytes to form the address
+    const effectiveAddress = ((higherByte << 8) | (lowerByte & 0xFF)) & 0xFFFF; // Ensure it wraps around at 0xFFFF
+    // Return the effective address and carry (1 if page boundary crossed, 0 otherwise)
+    return { effectiveAddress, carry };
 }
 
 export function getAbsoluteY(operand1, operand2) {
@@ -78,7 +87,16 @@ export function getAbsoluteY(operand1, operand2) {
     operand is address; effective address is address incremented by Y with carry
     Return the 16-bit address formed by combining the two bytes after shifting the second left by 8 bits and adding Y
     */
-    return (((operand2 << 8) | operand1) + cpuRegisters.y) & 0xFFFF;   // Ensure it wraps around at 0xFFFF
+    const lowerByte = operand1 + cpu.y; // Add Y to the lower byte
+    // Since read instructions that use Absolute Y addressing mode have a 1 cycle penalty if the page boundary is
+    // crossed due to having to perform an extra read, we need to check if the addition of Y to the low byte of the base
+    // address causes a carry
+    const carry = (lowerByte > 0xFF) ? 1 : 0; // Check if there is a carry (page boundary crossed)
+    const higherByte = (operand2 + carry) & 0xFF; // Add carry to the higher byte in case of page boundary crossing
+    // Combine the two bytes to form the address
+    const effectiveAddress = ((higherByte << 8) | (lowerByte & 0xFF)) & 0xFFFF; // Ensure it wraps around at 0xFFFF
+    // Return the effective address and carry (1 if page boundary crossed, 0 otherwise)
+    return { effectiveAddress, carry };
 }
 
 export function getImmediate() {
@@ -89,7 +107,7 @@ export function getImmediate() {
     *Note:  This is done to keep consistency in the get functions to always return addresses so that no distinction
             needs to be made between addressing modes in the instruction handlers
     */
-    return (cpuRegisters.pc - 1) & 0xFFFF;
+    return (cpu.pc - 1) & 0xFFFF;
 }
 
 export function getImplied() {
@@ -123,7 +141,7 @@ export function getXIndexedIndirect(operand) {
     operand is zeropage address; effective address is word in (LL + X, LL + X + 1), inc. without carry: C.w($00LL + X)
     return the 16 bit address obtained from memory address formed by adding X to the zeropage address operand
     */
-    const address = (operand + cpuRegisters.x) & 0xFF; // Address of the LSB of the word
+    const address = (operand + cpu.x) & 0xFF; // Address of the LSB of the word
     // Read the word from memory and shift the MSB (at address+1) left by 8 bits
     return (mainMemory[address] | (mainMemory[(address + 1) & 0xFF] << 8)) & 0xFFFF;
 }
@@ -135,7 +153,17 @@ export function getIndirectYIndexed(operand) {
     return the 16 bit address obtained from the zeropage memory address and adding to it the contents of Y
     */
     const address = operand & 0xFF; // Address of the LSB of the word
-    return ((mainMemory[address] | (mainMemory[(address + 1) & 0xFF] << 8)) + cpuRegisters.y) & 0xFFFF;
+    const lowerByte = mainMemory[address] + cpu.y; // Add Y to the lower byte
+    // Since read instructions that use (Indirect) Y addressing mode have a 1 cycle penalty if the page boundary is
+    // crossed due to having to perform an extra read, we need to check if the addition of Y to the low byte of the base
+    // address causes a carry
+    const carry = (lowerByte > 0xFF) ? 1 : 0; // Check if there is a carry (page boundary crossed)
+    // Add carry to the higher byte in case of page boundary crossing
+    const higherByte = (mainMemory[(address + 1) & 0xFF] + carry) & 0xFF;
+    // Combine the two bytes to form the address
+    const effectiveAddress = ((higherByte << 8) | (lowerByte & 0xFF)) & 0xFFFF; // Ensure it wraps around at 0xFFFF
+    // Return the effective address and carry (1 if page boundary crossed, 0 otherwise)
+    return { effectiveAddress, carry };
 }
 
 export function getRelative(operand) {
@@ -164,7 +192,7 @@ export function getZeropageXIndexed(operand) {
     return the zeropage address calculated by adding the byte operand to the value of register X
     (The address calculation wraps around if the sum of the base address and the register exceed $FF)
     */
-    return (operand + cpuRegisters.x) & 0xFF;
+    return (operand + cpu.x) & 0xFF;
 }
 
 export function getZeropageYIndexed(operand) {
@@ -174,12 +202,12 @@ export function getZeropageYIndexed(operand) {
     return the zeropage address calculated by adding the byte operand to the value of register Y
     (The address calculation wraps around if the sum of the base address and the register exceed $FF)
     */
-    return (operand + cpuRegisters.y) & 0xFF;
+    return (operand + cpu.y) & 0xFF;
 }
 
 // Functions to handle the execution of instructions
 
-export function ADC(memory_location) {
+export function ADC(memoryLocation) {
     /*
     Add with Carry
     A,Z,C,N = A+M+C
@@ -189,44 +217,66 @@ export function ADC(memory_location) {
     Note: The original 6502 does support decimal mode for this instruction, but the NES 6502 does not,
     so it is not implemented here.
     */
-    const value = mainMemory[memory_location];
-    const carry = (cpuRegisters.status & 0x01) ? 1 : 0;
-    let result = cpuRegisters.a + value + carry; // Add accumulator, value of memory_location and carry
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    const carry = (cpu.status & 0x01) ? 1 : 0;
+    let result = cpu.a + value + carry; // Add accumulator, value of memoryLocation and carry
     // Set carry flag if overflow in bit 7
-    cpuRegisters.status = (result > 0xFF) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+    cpu.status = (result > 0xFF) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
     result &= 0xFF; // Save only the lower byte (ignore carry) to keep the 2's complement representation of the result
 
     // When adding 2's complement numbers an overflow happens if A and M have the same sign but the sign of the result
     // is different. Doing an XOR with the 7th bit of 2 values will result in 0 if they have the same sign and 0x80 if
     // their sign is different
-    if ((((cpuRegisters.a ^ value) & 0x80) === 0) && (((cpuRegisters.a ^ result) & 0x80) !== 0)) {
-        cpuRegisters.status |= 0x40;    // Set overflow flag if overflow occurs
+    if ((((cpu.a ^ value) & 0x80) === 0) && (((cpu.a ^ result) & 0x80) !== 0)) {
+        cpu.status |= 0x40;    // Set overflow flag if overflow occurs
     } else {
-        cpuRegisters.status &= ~0x40;   // Clear overflow flag if no overflow
+        cpu.status &= ~0x40;   // Clear overflow flag if no overflow
     }
-    cpuRegisters.a = result;
+    cpu.a = result;
     // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function AND(memory_location) {
+export function AND(memoryLocation) {
     /*
     Logical AND
     A,Z,N = A&M
     A logical AND is performed, bit by bit, on the accumulator contents using the contents of a byte of memory.
     http://www.6502.org/users/obelisk/6502/reference.html#AND
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.a &= value; // Perform AND operation
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.a &= value; // Perform AND operation
     // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function ASL(memory_location) {
+export function ASL(memoryLocation) {
     /*
     Arithmetic Shift Left
     A,Z,C,N = M*2 or M,Z,C,N = M*2
@@ -236,28 +286,37 @@ export function ASL(memory_location) {
     setting the carry if the result will not fit in 8 bits.
     http://www.6502.org/users/obelisk/6502/reference.html#ASL
     */
+    // ASL admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator
-    if (memory_location === "accumulator") {
+    if (memoryLocation === "accumulator") {
         // Set carry flag if bit 7 is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
         // Shift one bit left and store only the lower byte (ignore carry)
-        cpuRegisters.a = (cpuRegisters.a << 1) & 0xFF;
+        cpu.a = (cpu.a << 1) & 0xFF;
         // Set zero flag if result is zero
-        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
-    } else {    // Operation is done on the contents of memory_location
-        const value = mainMemory[memory_location];
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
+    } else {    // Operation is done on the contents of memoryLocation
+        const value = mainMemory[memoryLocation];
         // Set carry flag if bit 7 is set
-        cpuRegisters.status = (value & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+        cpu.status = (value & 0x80) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
         // Shift one bit left and store only the lower byte (ignore carry)
-        mainMemory[memory_location] = (value << 1) & 0xFF;
+        mainMemory[memoryLocation] = (value << 1) & 0xFF;
         // Set zero flag if result is zero
-        cpuRegisters.status =
-            (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status =
+            (mainMemory[memoryLocation] === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status =
-            (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+        cpu.status =
+            (mainMemory[memoryLocation] & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
     }
 }
 
@@ -268,9 +327,14 @@ export function BCC(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BCC
     */
-    if (!(cpuRegisters.status & 0x01)) { // Check if carry flag is clear
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (!(cpu.status & 0x01)) { // Check if carry flag is clear
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -281,9 +345,14 @@ export function BCS(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BCS
     */
-    if (cpuRegisters.status & 0x01) { // Check if carry flag is set
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (cpu.status & 0x01) { // Check if carry flag is set
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -294,13 +363,18 @@ export function BEQ(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BEQ
     */
-    if (cpuRegisters.status & 0x02) { // Check if zero flag is set
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (cpu.status & 0x02) { // Check if zero flag is set
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
-export function BIT(memory_location) {
+export function BIT(memoryLocation) {
     /*
     Bit Test
     Z = A & M, N = M7, V = M6
@@ -309,15 +383,15 @@ export function BIT(memory_location) {
     but the result is not kept. Bits 7 and 6 of the value from memory are copied into the N and V flags.
     http://www.6502.org/users/obelisk/6502/reference.html#BIT
     */
-    const value = mainMemory[memory_location];
-    const result = cpuRegisters.a & value;
+    const value = mainMemory[memoryLocation];
+    const result = cpu.a & value;
 
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Copy bit 7 of value to negative flag
-    cpuRegisters.status = (value & 0x08) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (value & 0x08) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
     // Copy bit 6 of value to overflow flag
-    cpuRegisters.status = (value & 0x40) ? (cpuRegisters.status | 0x40) : (cpuRegisters.status & ~0x40);
+    cpu.status = (value & 0x40) ? (cpu.status | 0x40) : (cpu.status & ~0x40);
 }
 
 export function BMI(displacement) {
@@ -327,9 +401,14 @@ export function BMI(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BMI
     */
-    if (cpuRegisters.status & 0x80) { // Check if negative flag is set
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (cpu.status & 0x80) { // Check if negative flag is set
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -340,9 +419,14 @@ export function BNE(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BNE
     */
-    if (!(cpuRegisters.status & 0x02)) { // Check if zero flag is clear
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (!(cpu.status & 0x02)) { // Check if zero flag is clear
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -353,9 +437,14 @@ export function BPL(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BPL
     */
-    if (!(cpuRegisters.status & 0x80)) { // Check if negative flag is clear
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (!(cpu.status & 0x80)) { // Check if negative flag is clear
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -373,24 +462,24 @@ export function BRK() {
     // https://www.nesdev.org/wiki/Stack
     // There is always a padding byte after BRK instructions so the return address is the current PC + 1
     // (second byte after BRK)
-    const returnAddress = (cpuRegisters.pc + 1) & 0xFFFF;
+    const returnAddress = (cpu.pc + 1) & 0xFFFF;
     // Note: I found no reference to the order in which PC + 1 is pushed (HHLL or LLHH), but
     //       https://mirrors.apple2.org.za/ftp.apple.asimov.net/documentation/hardware/processors/MCS6500%20Family%20Programming%20Manual.pdf
     //       states that in the RTI instruction the return address is popped in the order LL HH, so I will assume that
     //       BRK pushes it in order HH LL
-    mainMemory[0x0100 + cpuRegisters.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
-    mainMemory[0x0100 + cpuRegisters.sp] = returnAddress & 0xFF; // Push low byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
-    cpuRegisters.status |= 0x10; // Set break flag (bit 4) in status register
-    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.status; // Push status register
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpu.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpu.sp] = returnAddress & 0xFF; // Push low byte of return address
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
+    cpu.status |= 0x10; // Set break flag (bit 4) in status register
+    mainMemory[0x0100 + cpu.sp] = cpu.status; // Push status register
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
 
-    const interrupt_address_low = mainMemory[0xFFFE]; // Read low byte of IRQ interrupt vector
-    const interrupt_address_high = mainMemory[0xFFFF]; // Read high byte of IRQ interrupt vector
+    const interruptAddressLow = mainMemory[0xFFFE]; // Read low byte of IRQ interrupt vector
+    const interruptAddressHigh = mainMemory[0xFFFF]; // Read high byte of IRQ interrupt vector
     // Combine the two bytes to form the address
-    const interrupt_handler_address = (interrupt_address_high << 8) | interrupt_address_low;
-    cpuRegisters.pc = interrupt_handler_address & 0xFFFF; // Set PC to the target memory address
+    const interruptHandlerAddress = (interruptAddressHigh << 8) | interruptAddressLow;
+    cpu.pc = interruptHandlerAddress & 0xFFFF; // Set PC to the target memory address
 }
 
 export function BVC(displacement) {
@@ -400,9 +489,14 @@ export function BVC(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BVC
     */
-    if (!(cpuRegisters.status & 0x04)) { // Check if overflow flag is clear
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (!(cpu.status & 0x04)) { // Check if overflow flag is clear
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -413,9 +507,14 @@ export function BVS(displacement) {
     a new location.
     http://www.6502.org/users/obelisk/6502/reference.html#BVS
     */
-    if (cpuRegisters.status & 0x04) { // Check if overflow flag is set
-        const new_pc = cpuRegisters.pc + displacement; // Calculate program counter after branch
-        cpuRegisters.pc = new_pc & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
+    if (cpu.status & 0x04) { // Check if overflow flag is set
+        cpu.currentInstructionCycles += 1; // Instruction takes an extra cycle if the branch is taken
+        const newPC = cpu.pc + displacement; // Calculate program counter after branch
+        if ((cpu.pc & 0xFF00) !== (newPC & 0xFF00)) {
+            // Instruction takes an extra cycle if the branch crosses a page boundary (High byte of PC changes)
+            cpu.currentInstructionCycles += 1;
+        }
+        cpu.pc = newPC & 0xFFFF; // Update program counter, ensuring it wraps around at 0xFFFF
     }
 }
 
@@ -426,7 +525,7 @@ export function CLC() {
     Set the carry flag to zero.
     http://www.6502.org/users/obelisk/6502/reference.html#CLC
     */
-    cpuRegisters.status = cpuRegisters.status & ~0x01; // Clear bit 0 (carry flag)
+    cpu.status = cpu.status & ~0x01; // Clear bit 0 (carry flag)
 }
 
 export function CLD() {
@@ -436,7 +535,7 @@ export function CLD() {
     Set the decimal mode flag to zero.
     http://www.6502.org/users/obelisk/6502/reference.html#CLD
     */
-    cpuRegisters.status = cpuRegisters.status & ~0x08; // Clear bit 3 (decimal mode flag)
+    cpu.status = cpu.status & ~0x08; // Clear bit 3 (decimal mode flag)
 }
 
 export function CLI() {
@@ -446,7 +545,7 @@ export function CLI() {
     Clears the interrupt disable flag allowing normal interrupt requests to be serviced.
     http://www.6502.org/users/obelisk/6502/reference.html#CLI
     */
-    cpuRegisters.status = cpuRegisters.status & ~0x04; // Clear bit 2 (interrupt disable flag)
+    cpu.status = cpu.status & ~0x04; // Clear bit 2 (interrupt disable flag)
 }
 
 export function CLV() {
@@ -456,10 +555,10 @@ export function CLV() {
     Clears the overflow flag.
     http://www.6502.org/users/obelisk/6502/reference.html#CLV
     */
-    cpuRegisters.status = cpuRegisters.status & ~0x40; // Clear bit 6 (overflow flag)
+    cpu.status = cpu.status & ~0x40; // Clear bit 6 (overflow flag)
 }
 
-export function CMP(memory_location) {
+export function CMP(memoryLocation) {
     /*
     Compare
     Z,C,N = A-M
@@ -467,17 +566,28 @@ export function CMP(memory_location) {
     carry flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#CMP
     */
-    const value = mainMemory[memory_location];
-    const result = (cpuRegisters.a - value) & 0xFF; // Subtract memory value from accumulator
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    const result = (cpu.a - value) & 0xFF; // Subtract memory value from accumulator
     // Set carry flag if result is non-negative (A >= M)
-    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+    cpu.status = (result >= 0) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
     // Set zero flag if result is zero (A === M)
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function CPX(memory_location) {
+export function CPX(memoryLocation) {
     /*
     Compare X Register
     Z,C,N = X-M
@@ -485,17 +595,17 @@ export function CPX(memory_location) {
     carry flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#CPX
     */
-    const value = mainMemory[memory_location];
-    const result = (cpuRegisters.x - value) & 0xFF; // Subtract memory value from X register
+    const value = mainMemory[memoryLocation];
+    const result = (cpu.x - value) & 0xFF; // Subtract memory value from X register
     // Set carry flag if result is non-negative (A >= M)
-    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+    cpu.status = (result >= 0) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
     // Set zero flag if result is zero (A === M)
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function CPY(memory_location) {
+export function CPY(memoryLocation) {
     /*
     Compare Y Register
     Z,C,N = Y-M
@@ -503,30 +613,39 @@ export function CPY(memory_location) {
     carry flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#CPY
     */
-    const value = mainMemory[memory_location];
-    const result = (cpuRegisters.y - value) & 0xFF; // Subtract memory value from Y register
+    const value = mainMemory[memoryLocation];
+    const result = (cpu.y - value) & 0xFF; // Subtract memory value from Y register
     // Set carry flag if result is non-negative (A >= M)
-    cpuRegisters.status = (result >= 0) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+    cpu.status = (result >= 0) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
     // Set zero flag if result is zero (A === M)
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function DEC(memory_location) {
+export function DEC(memoryLocation) {
     /*
     Decrement Memory
     M,Z,N = M-1
     Subtracts one from the value held at a specified memory location setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#DEC
     */
-    const value = mainMemory[memory_location];
+    // DEC admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
     const result = (value - 1) & 0xFF; // Subtract 1 from memory value (wraps around from 0x00 to 0xFF)
-    mainMemory[memory_location] = result; // Store result in original memory location
+    mainMemory[memoryLocation] = result; // Store result in original memory location
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function DEX() {
@@ -536,12 +655,12 @@ export function DEX() {
     Subtracts one from the X register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#DEX
     */
-    const result = (cpuRegisters.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
-    cpuRegisters.x = result; // Store result in X register
+    const result = (cpu.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
+    cpu.x = result; // Store result in X register
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function DEY() {
@@ -551,43 +670,63 @@ export function DEY() {
     Subtracts one from the Y register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#DEY
     */
-    const result = (cpuRegisters.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
-    cpuRegisters.y = result; // Store result in Y register
+    const result = (cpu.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
+    cpu.y = result; // Store result in Y register
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function EOR(memory_location) {
+export function EOR(memoryLocation) {
     /*
     Exclusive OR
     A,Z,N = A^M
     An exclusive OR is performed, bit by bit, on the accumulator contents using the contents of a byte of memory.
     http://www.6502.org/users/obelisk/6502/reference.html#EOR
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.a ^= value; // Perform XOR operation
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.a ^= value; // Perform XOR operation
     // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function INC(memory_location) {
+export function INC(memoryLocation) {
     /*
     Increment Memory
     M,Z,N = M+1
     Adds one to the value held at a specified memory location setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#INC
     */
-    const value = mainMemory[memory_location];
+    // INC admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
     const result = (value + 1) & 0xFF; // Subtract 1 from memory value (wraps around from 0xFF to 0x00)
-    mainMemory[memory_location] = result; // Store result in original memory location
+    mainMemory[memoryLocation] = result; // Store result in original memory location
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function INX() {
@@ -597,12 +736,12 @@ export function INX() {
     Adds one to the X register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#INX
     */
-    const result = (cpuRegisters.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
-    cpuRegisters.x = result; // Store result in X register
+    const result = (cpu.x - 1) & 0xFF; // Subtract 1 from X register (wraps around from 0x00 to 0xFF)
+    cpu.x = result; // Store result in X register
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function INY() {
@@ -612,25 +751,25 @@ export function INY() {
     Adds one to the Y register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#INY
     */
-    const result = (cpuRegisters.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
-    cpuRegisters.y = result; // Store result in Y register
+    const result = (cpu.y - 1) & 0xFF; // Subtract 1 from Y register (wraps around from 0x00 to 0xFF)
+    cpu.y = result; // Store result in Y register
     // Set zero flag if result is zero
-    cpuRegisters.status = (result === 0) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (result === 0) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (result & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (result & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function JMP(memory_location) {
+export function JMP(memoryLocation) {
     /*
     Jump
     PC = $HHLL
     Sets the program counter to the address specified by the operand.
     http://www.6502.org/users/obelisk/6502/reference.html#JMP
     */
-    cpuRegisters.pc = memory_location & 0xFFFF; // Ensure it wraparound at 0xFFFF
+    cpu.pc = memoryLocation & 0xFFFF; // Ensure it wraparound at 0xFFFF
 }
 
-export function JSR(memory_location) {
+export function JSR(memoryLocation) {
     /*
     Jump to Subroutine
     The JSR instruction pushes the address (minus one) of the return point on to the stack and then sets the
@@ -642,65 +781,98 @@ export function JSR(memory_location) {
     // the last byte of the JSR instruction, as seen in
     // 1976 MCS 6500 Family Programming Manual (*1) in section 8.1 JSR - Jump to Subroutine p.106..109
     // https://archive.org/details/6500-50a_mcs6500pgmmanjan76/page/n121/mode/2up?view=theater
-    const returnAddress = (cpuRegisters.pc - 1) & 0xFFFF;
+    const returnAddress = (cpu.pc - 1) & 0xFFFF;
 
     // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack
     // (the stack pointer points to the element where the next value will be stored)
     // The stack pointer is an 8-bit resgister that contains the LSB of the stack address (0x0100 + SP)
     // https://www.nesdev.org/wiki/Stack
-    mainMemory[0x0100 + cpuRegisters.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
-    mainMemory[0x0100 + cpuRegisters.sp] = returnAddress & 0xFF; // Push low byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
-    cpuRegisters.pc = memory_location & 0xFFFF; // Set PC to the target memory address
+    mainMemory[0x0100 + cpu.sp] = (returnAddress >> 8) & 0xFF; // Push high byte of return address
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpu.sp] = returnAddress & 0xFF; // Push low byte of return address
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
+    cpu.pc = memoryLocation & 0xFFFF; // Set PC to the target memory address
 }
 
-export function LDA(memory_location) {
+export function LDA(memoryLocation) {
     /*
     Load Accumulator
     A,Z,N = M
     Loads a byte of memory into the accumulator setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#LDA
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.a = value; // Store in accumulator
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.a = value; // Store in accumulator
     // Set zero flag if value stored is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value stored is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function LDX(memory_location) {
+export function LDX(memoryLocation) {
     /*
     Load X Register
     X,Z,N = M
     Loads a byte of memory into the X register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#LDX
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.x = value; // Store in X register
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteY
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.x = value; // Store in X register
     // Set zero flag if value stored is zero
-    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.x === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value stored is set
-    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.x & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function LDY(memory_location) {
+export function LDY(memoryLocation) {
     /*
     Load Y Register
     Y,Z,N = M
     Loads a byte of memory into the Y register setting the zero and negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#LDY
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.y = value; // Store in Y register
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.y = value; // Store in Y register
     // Set zero flag if value stored is zero
-    cpuRegisters.status = (cpuRegisters.y === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.y === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value stored is set
-    cpuRegisters.status = (cpuRegisters.y & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.y & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
-export function LSR(memory_location) {
+export function LSR(memoryLocation) {
     /*
     Logical Shift Right
     A,Z,C,N = M/2 or M,Z,C,N = M/2
@@ -708,26 +880,35 @@ export function LSR(memory_location) {
     the carry flag. Bit 7 is set to zero.
     http://www.6502.org/users/obelisk/6502/reference.html#LSR
     */
+    // LSR admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator
-    if (memory_location === "accumulator") {
+    if (memoryLocation === "accumulator") {
         // Set carry flag if bit 0 is set
-        cpuRegisters.status = (cpuRegisters.a & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
-        cpuRegisters.a = (cpuRegisters.a >> 1) & 0xFF;  // Shift one bit right
+        cpu.status = (cpu.a & 0x01) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
+        cpu.a = (cpu.a >> 1) & 0xFF;  // Shift one bit right
         // Set zero flag if result is zero
-        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
-    } else {    // Operation is done on the contents of memory_location
-        const value = mainMemory[memory_location];
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
+    } else {    // Operation is done on the contents of memoryLocation
+        const value = mainMemory[memoryLocation];
         // Set carry flag if bit 0 is set
-        cpuRegisters.status = (value & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
-        mainMemory[memory_location] = (value >> 1) & 0xFF;  // Shift one bit right
+        cpu.status = (value & 0x01) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
+        mainMemory[memoryLocation] = (value >> 1) & 0xFF;  // Shift one bit right
         // Set zero flag if result is zero
-        cpuRegisters.status =
-            (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status =
+            (mainMemory[memoryLocation] === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status =
-            (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+        cpu.status =
+            (mainMemory[memoryLocation] & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
     }
 }
 
@@ -740,19 +921,30 @@ export function NOP() {
     */
 }
 
-export function ORA(memory_location) {
+export function ORA(memoryLocation) {
     /*
     Logical Inclusive OR
     A,Z,N = A|M
     An inclusive OR is performed, bit by bit, on the accumulator contents using the contents of a byte of memory.
     http://www.6502.org/users/obelisk/6502/reference.html#ORA
     */
-    const value = mainMemory[memory_location];
-    cpuRegisters.a |= value; // Perform OR operation
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    cpu.a |= value; // Perform OR operation
     // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function PHA() {
@@ -763,8 +955,8 @@ export function PHA() {
     */
     // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack
     // (the stack pointer points to the element where the next value will be stored)
-    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.a; // Push accumulator
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    mainMemory[0x0100 + cpu.sp] = cpu.a; // Push accumulator
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
 }
 
 export function PHP() {
@@ -776,9 +968,9 @@ export function PHP() {
     // The stack is located between 0x01FF-0x0100, grows downwards and is an empty stack
     // (the stack pointer points to the element where the next value will be stored)
     // Set bit 4 (break flag) and bit 5 (ignored) to 1 (https://www.masswerk.at/6502/6502_instruction_set.html#PHP)
-    cpuRegisters.status |= 0x30;    // Set break flag and ignored bit (or with 00110000 = 0x30)
-    mainMemory[0x0100 + cpuRegisters.sp] = cpuRegisters.status; // Push status register
-    cpuRegisters.sp = (cpuRegisters.sp - 1) & 0xFF; // Decrement stack pointer
+    cpu.status |= 0x30;    // Set break flag and ignored bit (or with 00110000 = 0x30)
+    mainMemory[0x0100 + cpu.sp] = cpu.status; // Push status register
+    cpu.sp = (cpu.sp - 1) & 0xFF; // Decrement stack pointer
 }
 
 export function PLA() {
@@ -787,12 +979,12 @@ export function PLA() {
     Pulls an 8 bit value from the stack and into the accumulator. The zero and negative flags are set as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#PLA
     */
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
-    cpuRegisters.a = mainMemory[0x0100 + cpuRegisters.sp]; // Pull accumulator
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpu.a = mainMemory[0x0100 + cpu.sp]; // Pull accumulator
     // Set zero flag if value pulled is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value pulled is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function PLP() {
@@ -802,77 +994,95 @@ export function PLP() {
     The flags will take on new states as determined by the value pulled.
     http://www.6502.org/users/obelisk/6502/reference.html#PLP
     */
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
     // Pull status register ignoring the break flag and ignored bit
     // (https://www.masswerk.at/6502/6502_instruction_set.html#PLP)
-    cpuRegisters.status = (mainMemory[0x0100 + cpuRegisters.sp]) & ~0x30;
+    cpu.status = (mainMemory[0x0100 + cpu.sp]) & ~0x30;
 }
 
-export function ROL(memory_location) {
+export function ROL(memoryLocation) {
     /*
     Rotate Left
     Move each of the bits in either A or M one place to the left. Bit 0 is filled with the current value of the carry
     flag whilst the old bit 7 becomes the new carry flag value.
     http://www.6502.org/users/obelisk/6502/reference.html#ROL
     */
-    const carry = cpuRegisters.status & 0x01;  // Store carry flag to set it to bit 0 of the result later
+    // ROL admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const carry = cpu.status & 0x01;  // Store carry flag to set it to bit 0 of the result later
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator
-    if (memory_location === "accumulator") {
+    if (memoryLocation === "accumulator") {
         // Set carry flag if bit 7 is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
         // Shift one bit left and store only the lower byte (ignore carry)
-        cpuRegisters.a = (cpuRegisters.a << 1) & 0xFF;
-        cpuRegisters.a |= carry;   // Set bit 0 to previous carry flag
+        cpu.a = (cpu.a << 1) & 0xFF;
+        cpu.a |= carry;   // Set bit 0 to previous carry flag
         // Set zero flag if result is zero
-        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
-    } else {    // Operation is done on the contents of memory_location
-        const value = mainMemory[memory_location];
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
+    } else {    // Operation is done on the contents of memoryLocation
+        const value = mainMemory[memoryLocation];
         // Set carry flag if bit 7 is set
-        cpuRegisters.status = (value & 0x80) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
+        cpu.status = (value & 0x80) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
         // Shift one bit left and store only the lower byte (ignore carry)
-        mainMemory[memory_location] = (value << 1) & 0xFF;
-        mainMemory[memory_location] |= carry;   // Set bit 0 to previous carry flag
+        mainMemory[memoryLocation] = (value << 1) & 0xFF;
+        mainMemory[memoryLocation] |= carry;   // Set bit 0 to previous carry flag
         // Set zero flag if result is zero
-        cpuRegisters.status =
-            (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status =
+            (mainMemory[memoryLocation] === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status =
-            (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+        cpu.status =
+            (mainMemory[memoryLocation] & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
     }
 }
 
-export function ROR(memory_location) {
+export function ROR(memoryLocation) {
     /*
     Rotate Right
     Move each of the bits in either A or M one place to the left.
     Bit 0 is filled with the current value of the carry flag whilst the old bit 7 becomes the new carry flag value.
     http://www.6502.org/users/obelisk/6502/reference.html#ROR
     */
-    const carry = cpuRegisters.status & 0x01;
+    // ROR admits Absolute,X addressing but it applies no cycle penalty for page crossing, so we just obtain the
+    // effective address from the object returned by the getAbsoluteX function and ignore the page crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const carry = cpu.status & 0x01;
     // When the instruction has no arguments (1 byte instruction) the operation is performed on the accumulator
-    if (memory_location === "accumulator") {
+    if (memoryLocation === "accumulator") {
         // Set carry flag if bit 0 is set
-        cpuRegisters.status = (cpuRegisters.a & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
-        cpuRegisters.a = (cpuRegisters.a >> 1) & 0xFF;  // Shift one bit right
-        cpuRegisters.a |= (carry << 7);   // Set bit 7 to previous carry flag
+        cpu.status = (cpu.a & 0x01) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
+        cpu.a = (cpu.a >> 1) & 0xFF;  // Shift one bit right
+        cpu.a |= (carry << 7);   // Set bit 7 to previous carry flag
         // Set zero flag if result is zero
-        cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
-    } else {    // Operation is done on the contents of memory_location
-        const value = mainMemory[memory_location];
+        cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
+    } else {    // Operation is done on the contents of memoryLocation
+        const value = mainMemory[memoryLocation];
         // Set carry flag if bit 0 is set
-        cpuRegisters.status = (value & 0x01) ? (cpuRegisters.status | 0x01) : (cpuRegisters.status & ~0x01);
-        mainMemory[memory_location] = (value >> 1) & 0xFF;  // Shift one bit right
-        mainMemory[memory_location] |= (carry << 7);   // Set bit 7 to previous carry flag
+        cpu.status = (value & 0x01) ? (cpu.status | 0x01) : (cpu.status & ~0x01);
+        mainMemory[memoryLocation] = (value >> 1) & 0xFF;  // Shift one bit right
+        mainMemory[memoryLocation] |= (carry << 7);   // Set bit 7 to previous carry flag
         // Set zero flag if result is zero
-        cpuRegisters.status =
-            (mainMemory[memory_location] === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+        cpu.status =
+            (mainMemory[memoryLocation] === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
         // Set negative flag if bit 7 of the result is set
-        cpuRegisters.status =
-            (mainMemory[memory_location] & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+        cpu.status =
+            (mainMemory[memoryLocation] & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
     }
 }
 
@@ -883,15 +1093,15 @@ export function RTI() {
     It pulls the processor flags from the stack followed by the program counter.
     http://www.6502.org/users/obelisk/6502/reference.html#RTI
     */
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
     // Pull status register ignoring the break flag and ignored bit
     // (https://www.masswerk.at/6502/6502_instruction_set.html#RTI)
-    cpuRegisters.status = (mainMemory[0x0100 + cpuRegisters.sp]) & ~0x30;
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
-    const PC_low = mainMemory[0x0100 + cpuRegisters.sp]; // Pull low byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
-    const PC_high = mainMemory[0x0100 + cpuRegisters.sp]; // Pull high byte of return address
-    cpuRegisters.pc = ((PC_high << 8) | PC_low) & 0xFFFF; // Set program counter to the return address
+    cpu.status = (mainMemory[0x0100 + cpu.sp]) & ~0x30;
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer
+    const lowPC = mainMemory[0x0100 + cpu.sp]; // Pull low byte of return address
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer
+    const highPC = mainMemory[0x0100 + cpu.sp]; // Pull high byte of return address
+    cpu.pc = ((highPC << 8) | lowPC) & 0xFFFF; // Set program counter to the return address
 }
 
 export function RTS() {
@@ -901,20 +1111,20 @@ export function RTS() {
     It pulls the program counter (minus one) from the stack.
     http://www.6502.org/users/obelisk/6502/reference.html#RTS
     */
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
-    const PC_low = mainMemory[0x0100 + cpuRegisters.sp]; // Pull low byte of return address
-    cpuRegisters.sp = (cpuRegisters.sp + 1) & 0xFF; // Increment stack pointer
-    const PC_high = mainMemory[0x0100 + cpuRegisters.sp]; // Pull high byte of return address
-    cpuRegisters.pc = ((PC_high << 8) | PC_low) & 0xFFFF; // Set program counter to the return address
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer to point to last pushed value
+    const lowPC = mainMemory[0x0100 + cpu.sp]; // Pull low byte of return address
+    cpu.sp = (cpu.sp + 1) & 0xFF; // Increment stack pointer
+    const highPC = mainMemory[0x0100 + cpu.sp]; // Pull high byte of return address
+    cpu.pc = ((highPC << 8) | lowPC) & 0xFFFF; // Set program counter to the return address
     // The PC pulled needs to be incremented by 1 to point to the next instruction after the RTS
     // This is explained in the JSR instruction, which pushes the return address minus one
     // (last byte of the RTS instruction) due to the internal working of the 6502, as seen in
     // 1976 MCS 6500 Family Programming Manual (*1) in section 8.1 JSR - Jump to Subroutine p.106..109
     // https://archive.org/details/6500-50a_mcs6500pgmmanjan76/page/n121/mode/2up?view=theater
-    cpuRegisters.pc = (cpuRegisters.pc + 1) & 0xFFFF;
+    cpu.pc = (cpu.pc + 1) & 0xFFFF;
 }
 
-export function SBC(memory_location) {
+export function SBC(memoryLocation) {
     /*
     Subtract with Carry
     A,Z,C,N = A-M-(1-C)
@@ -924,26 +1134,37 @@ export function SBC(memory_location) {
     Note: The original 6502 does support decimal mode for this instruction, but the NES 6502 does not,
     so it is not implemented here.
     */
-    const value = mainMemory[memory_location];
-    const carry = (cpuRegisters.status & 0x01) ? 1 : 0;
-    // Substract value of memory_location and carry from accumulator
-    let result = cpuRegisters.a - value - (1 - carry);
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address and page crossing flag
+        const { effectiveAddress, pageCrossed } = memoryLocation;
+        // If pageCrossed is true, it means the effective address crosses a page boundary
+        if (pageCrossed) {
+            cpu.currentInstructionCycles += 1; // Add an extra cycle if the page boundary is crossed
+        }
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    const value = mainMemory[memoryLocation];
+    const carry = (cpu.status & 0x01) ? 1 : 0;
+    // Substract value of memoryLocation and carry from accumulator
+    let result = cpu.a - value - (1 - carry);
     // Clear carry flag if overflow in bit 7 (negative binary result)
-    cpuRegisters.status = (result < 0x00) ? (cpuRegisters.status & ~0x01) : (cpuRegisters.status | 0x01);
+    cpu.status = (result < 0x00) ? (cpu.status & ~0x01) : (cpu.status | 0x01);
     result &= 0xFF; // Save only the lower byte (ignore carry) to keep the 2's complement representation of the result
     // When substracting 2's complement numbers an overflow happens if A and M have different sign and the sign of the
     // result different from A. Doing an XOR with the 7th bit of 2 values will result in 0 if they have the same sign
     // and 0x80 if their sign is different
-    if ((((cpuRegisters.a ^ value) & 0x80) !== 0) && (((cpuRegisters.a ^ result) & 0x80) !== 0)) {
-        cpuRegisters.status |= 0x40;    // Set overflow flag if overflow occurs
+    if ((((cpu.a ^ value) & 0x80) !== 0) && (((cpu.a ^ result) & 0x80) !== 0)) {
+        cpu.status |= 0x40;    // Set overflow flag if overflow occurs
     } else {
-        cpuRegisters.status &= ~0x40;   // Clear overflow flag if no overflow
+        cpu.status &= ~0x40;   // Clear overflow flag if no overflow
     }
-    cpuRegisters.a = result;
+    cpu.a = result;
     // Set zero flag if result is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the result is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function SEC() {
@@ -953,7 +1174,7 @@ export function SEC() {
     Set the carry flag to one.
     http://www.6502.org/users/obelisk/6502/reference.html#SEC
     */
-    cpuRegisters.status = cpuRegisters.status | 0x01; // Set bit 0 (carry flag)
+    cpu.status = cpu.status | 0x01; // Set bit 0 (carry flag)
 }
 
 export function SED() {
@@ -963,7 +1184,7 @@ export function SED() {
     Set the decimal mode flag to one.
     http://www.6502.org/users/obelisk/6502/reference.html#SED
     */
-    cpuRegisters.status = cpuRegisters.status | 0x08; // Set bit 3 (decimal mode flag)
+    cpu.status = cpu.status | 0x08; // Set bit 3 (decimal mode flag)
 }
 
 export function SEI() {
@@ -973,37 +1194,47 @@ export function SEI() {
     Set the interrupt disable flag to one.
     http://www.6502.org/users/obelisk/6502/reference.html#SEI
     */
-    cpuRegisters.status = cpuRegisters.status | 0x04; // Set bit 2 (interrupt disable flag)
+    cpu.status = cpu.status | 0x04; // Set bit 2 (interrupt disable flag)
 }
 
-export function STA(memory_location) {
+export function STA(memoryLocation) {
     /*
     Store Accumulator
     M = A
     Stores the contents of the accumulator into memory.
     http://www.6502.org/users/obelisk/6502/reference.html#STA
     */
-    mainMemory[memory_location] = cpuRegisters.a;
+    // STA admits Absolute,X, Absolute,Y and (Indirect),Y addressing but it applies no cycle penalty for page crossing,
+    // so we just obtain the effective address from the object returned by the getAbsoluteX function and ignore the page
+    // crossing flag
+    if (typeof memoryLocation === "object") {
+        // If memoryLocation is an object it was returned by getAbsoluteX, getAbsoluteY or getIndirectYIndexed
+        // Destructure the object to get the address (ignore page crossing flag)
+        const { effectiveAddress } = memoryLocation;
+        memoryLocation = effectiveAddress; // Use the effective address for the operation
+    }
+
+    mainMemory[memoryLocation] = cpu.a;
 }
 
-export function STX(memory_location) {
+export function STX(memoryLocation) {
     /*
     Store X Register
     M = X
     Stores the contents of the X register into memory.
     http://www.6502.org/users/obelisk/6502/reference.html#STX
     */
-    mainMemory[memory_location] = cpuRegisters.x;
+    mainMemory[memoryLocation] = cpu.x;
 }
 
-export function STY(memory_location) {
+export function STY(memoryLocation) {
     /*
     Store Y Register
     M = Y
     Stores the contents of the Y register into memory.
     http://www.6502.org/users/obelisk/6502/reference.html#STY
     */
-    mainMemory[memory_location] = cpuRegisters.y;
+    mainMemory[memoryLocation] = cpu.y;
 }
 
 export function TAX() {
@@ -1014,11 +1245,11 @@ export function TAX() {
     negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#TAX
     */
-    cpuRegisters.x = cpuRegisters.a;
+    cpu.x = cpu.a;
     // Set zero flag if value transfered is zero
-    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.x === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value transfered is set
-    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.x & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function TAY() {
@@ -1029,11 +1260,11 @@ export function TAY() {
     negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#TAY
     */
-    cpuRegisters.y = cpuRegisters.a;
+    cpu.y = cpu.a;
     // Set zero flag if value transfered is zero
-    cpuRegisters.status = (cpuRegisters.y === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.y === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value transfered is set
-    cpuRegisters.status = (cpuRegisters.y & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.y & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function TSX() {
@@ -1044,11 +1275,11 @@ export function TSX() {
     negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#TSX
     */
-    cpuRegisters.x = cpuRegisters.sp;
+    cpu.x = cpu.sp;
     // Set zero flag if value transfered is zero
-    cpuRegisters.status = (cpuRegisters.x === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.x === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value transfered is set
-    cpuRegisters.status = (cpuRegisters.x & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.x & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function TXA() {
@@ -1059,11 +1290,11 @@ export function TXA() {
     negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#TXA
     */
-    cpuRegisters.a = cpuRegisters.x;
+    cpu.a = cpu.x;
     // Set zero flag if value transfered is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value transfered is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 
 export function TXS() {
@@ -1073,7 +1304,7 @@ export function TXS() {
     Copies the current contents of the X register into the stack register.
     http://www.6502.org/users/obelisk/6502/reference.html#TXS
     */
-    cpuRegisters.sp = cpuRegisters.x; // Store X register in stack pointer
+    cpu.sp = cpu.x; // Store X register in stack pointer
 }
 
 export function TYA() {
@@ -1084,10 +1315,10 @@ export function TYA() {
     negative flags as appropriate.
     http://www.6502.org/users/obelisk/6502/reference.html#TYA
     */
-    cpuRegisters.a = cpuRegisters.y;
+    cpu.a = cpu.y;
     // Set zero flag if value transfered is zero
-    cpuRegisters.status = (cpuRegisters.a === 0x00) ? (cpuRegisters.status | 0x02) : (cpuRegisters.status & ~0x02);
+    cpu.status = (cpu.a === 0x00) ? (cpu.status | 0x02) : (cpu.status & ~0x02);
     // Set negative flag if bit 7 of the value transfered is set
-    cpuRegisters.status = (cpuRegisters.a & 0x80) ? (cpuRegisters.status | 0x80) : (cpuRegisters.status & ~0x80);
+    cpu.status = (cpu.a & 0x80) ? (cpu.status | 0x80) : (cpu.status & ~0x80);
 }
 

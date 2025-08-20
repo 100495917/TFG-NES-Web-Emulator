@@ -1,8 +1,8 @@
 // Prototype for the object representing an opcode in the 6502 CPU
 class OpCode {
-    constructor(instruction_name, addressing_mode, size, cycles) {
-        this.instruction_name = instruction_name;   // Name of the instruction in a 3 letter string format
-        this.addressing_mode = addressing_mode; // Addressing mode as a string
+    constructor(instructionName, addressingMode, size, cycles) {
+        this.instructionName = instructionName;   // Name of the instruction in a 3 letter string format
+        this.addressingMode = addressingMode; // Addressing mode as a string
         this.size = size; // Size in bytes from 1 to 3
         this.cycles = cycles;   // Number of cycles needed to execute the instruction
     }
@@ -40,7 +40,7 @@ zpg,Y	zeropage, Y-indexed	        OPC $LL,Y	    operand is zeropage address;
 
 // TODO: move to a JSON file instead of hardcoding the opcodes in the code???
 
-export const opcode_matrix = {
+export const opcodeMatrix = {
     0x00: new OpCode("BRK", "impl", 1, 7),
     0x01: new OpCode("ORA", "X,ind", 2, 6),
     0x05: new OpCode("ORA", "zpg", 2, 3),

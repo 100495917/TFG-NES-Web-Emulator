@@ -14,8 +14,8 @@ export default defineConfig([
             // --- Line length ---
             "max-len": ["warn", { code: 120, ignoreUrls: true, ignoreStrings: false, ignoreTemplateLiterals: false }],
 
-            // --- Variable naming (snake_case) ---
-            //"id-match": ["warn", "^(?:[a-z]+(_[a-z]+)*|[A-Z0-9_]+)$", { properties: true, onlyDeclarations: true }],
+            // --- Variable and function naming (camelCase or UPPERCASE) ---
+            "id-match": ["warn", "^(?:[a-z][a-zA-Z0-9]*|[A-Z0-9_]+)$", { properties: true, onlyDeclarations: true }],
 
             // --- Semicolons ---
             "semi": ["warn", "always"],
