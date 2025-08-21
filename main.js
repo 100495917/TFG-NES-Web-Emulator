@@ -10,6 +10,7 @@ const cycleButton = document.getElementById("cycleButton");
 const totalCyclesDisplay = document.getElementById("totalCycles");
 
 export let mainMemory = new Uint8Array(0x10000); // 64KB of main CPU memory in a Uint8Array (bytes)
+export let ppuMemory = new Uint8Array(0x4000); // 16KB of PPU memory in a Uint8Array (bytes)
 
 export let cpu = {
     a: 0, // Accumulator
@@ -48,7 +49,10 @@ function readRom() {
         }
         console.log('ROM data after header removal:', romData);
 
-        // Remove the last 8KB of chr-rom sice it is not used by the CPU (TODO: load the CHR-ROM into PPU memory)
+        // Load the CHR-ROM data into PPU memory
+        loadCHRRom(romData);
+
+        // Remove the last 8KB of chr-rom sice it is not used by the CPU
         console.log('Removing last 8KB of CHR-ROM.');
         romData = romData.slice(0, -8192);
         console.log('ROM data after removing last 8KB:', romData);
@@ -60,6 +64,82 @@ function readRom() {
         alert("Error reading the ROM file.");
     };
     reader.readAsArrayBuffer(file);
+}
+
+function loadCHRRom(romData) {
+    // Extract the last 8KB of CHR-ROM data from the ROM file
+    const chrRomSize = 8192; // 8KB CHR-ROM size
+    const chrRomStart = romData.length - chrRomSize;
+    console.log('Extracting last 8KB of CHR-ROM from ROM data.');
+    let chrRom = new Uint8Array(chrRomSize);
+    chrRom.set(romData.slice(chrRomStart, romData.length)); // Get last 8KB of CHR-ROM
+    console.log('CHR-ROM data:', chrRom);
+
+    displayPatternTables(chrRom);   // Draw the pattern table pixels in the 2 HTML canvas at the left of the inteface
+
+    // Load the CHR-ROM data into PPU memory starting at address 0
+    console.log('Loading CHR-ROM into PPU memory.');
+    ppuMemory.set(chrRom, 0);
+    console.log('PPU memory after loading CHR-ROM:', ppuMemory);
+}
+
+function displayPatternTables(chrRom) {
+    console.log('Displaying Pattern Tables.');
+    const patternTable1 = document.getElementById("pattern-table1");
+    const patternTable2 = document.getElementById("pattern-table2");
+    const ctx1 = patternTable1.getContext("2d");
+    const ctx2 = patternTable2.getContext("2d");
+    const tileWidth = 8; // Each tile is 8x8 pixels
+    const tileHeight = 8;
+    const numTiles = 256; // 256 tiles in each pattern table
+    const numCols = 16; // 16 columns of tiles in each pattern table
+    // Obtain the color palette from the HTML input elements above the pattern tables
+    const color0 = document.getElementById("pattern-table-color0").value;
+    const color1 = document.getElementById("pattern-table-color1").value;
+    const color2 = document.getElementById("pattern-table-color2").value;
+    const color3 = document.getElementById("pattern-table-color3").value;
+    const palette = [color0, color1, color2, color3];
+    // Clear the canvas
+    ctx1.clearRect(0, 0, patternTable1.width, patternTable1.height);
+    ctx2.clearRect(0, 0, patternTable2.width, patternTable2.height);
+    // Draw the first pattern table (first 128 bytes of CHR-ROM)
+    for (let i = 0; i < numTiles; i++) {
+        const tileData = chrRom.slice(i * 16, i * 16 + 16); // Each tile is 16 bytes
+        const x = (i % numCols) * tileWidth;    // x coordinate of the top left corner of the tile
+        const y = Math.floor(i / numCols) * tileHeight;   // y coordinate of the top left corner of the tile
+        const bitPlane0 = tileData.slice(0, 8); // First 8 bytes for first bit plane
+        const bitPlane1 = tileData.slice(8, 16); // Last 8 bytes for second bit plane
+        for (let row = 0; row < tileHeight; row++) {
+            // Each row of 8 pixels is represented by two bytes (one for each bit plane)
+            const byte1 = bitPlane0[row];
+            const byte2 = bitPlane1[row];
+            for (let col = 0; col < tileWidth; col++) {
+                // Calculate the color index based on the two bits obatined from the two bit planes
+                const colorIndex = ((byte1 >> (7 - col)) & 1) | (((byte2 >> (7 - col)) & 1) << 1);
+                ctx1.fillStyle = palette[colorIndex];   // Index indicates the color to choose from the 4 color palette
+                ctx1.fillRect(x + col, y + row, 1, 1);
+            }
+        }
+    }
+    // Draw the second pattern table (last 128 bytes of CHR-ROM)
+    for (let i = 0; i < numTiles; i++) {
+        const tileData = chrRom.slice(numTiles * 16 + i * 16, numTiles * 16 + i * 16 + 16); // Each tile is 16 bytes
+        const x = (i % numCols) * tileWidth;    // x coordinate of the top left corner of the tile
+        const y = Math.floor(i / numCols) * tileHeight;   // y coordinate of the top left corner of the tile
+        const bitPlane0 = tileData.slice(0, 8); // First 8 bytes for first bit plane
+        const bitPlane1 = tileData.slice(8, 16); // Last 8 bytes for second bit plane
+        for (let row = 0; row < tileHeight; row++) {
+            // Each row of 8 pixels is represented by two bytes (one for each bit plane)
+            const byte1 = bitPlane0[row];
+            const byte2 = bitPlane1[row];
+            for (let col = 0; col < tileWidth; col++) {
+                // Calculate the color index based on the two bits obatined from the two bit planes
+                const colorIndex = ((byte1 >> (7 - col)) & 1) | (((byte2 >> (7 - col)) & 1) << 1);
+                ctx2.fillStyle = palette[colorIndex];   // Index indicates the color to choose from the 4 color palette
+                ctx2.fillRect(x + col, y + row, 1, 1);
+            }
+        }
+    }
 }
 
 function loadRom(romData) {

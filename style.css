@@ -21,29 +21,51 @@ h4 {
 
 #main-container {
     width: 100vw;
-    height: 100vh;
+    height: auto;
     display: flex;
     flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 100px;
+    gap: 5vw;
+    margin-top: 10px;
 }
 
-#game-container {
-    width: 50vw;
-    height: 75vh;
+#pattern-table-container {
+    width: 25vw;
+    height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: baseline;
     background-color: #272525;
-    padding-top: 100px;
     gap: 10px;
-    font-size: x-large;
+}
+
+#pattern-table1, #pattern-table2 {
+    border: 1px solid black;
+    background-color: #000;
+    width: 256px;
+    height: 256px;
+    image-rendering: pixelated;
+}
+
+#game-container {
+    width: 25vw;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: baseline;
+    background-color: #272525;
+    gap: 1vh;
+}
+
+#game-container label {
+    margin-top: 20px;
 }
 
 #status-container {
-    width: auto;
+    width: 25vw;
     height: 85vh;
     padding-left: 10px;
     padding-right: 10px;    

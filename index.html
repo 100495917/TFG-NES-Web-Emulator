@@ -10,6 +10,20 @@
     <h1>NES Web Emulator</h1>
     <h4>Work in progress developed by David Mancebo 100495917, UC3M Leganés</h4>
     <div id="main-container">
+        <div id="pattern-table-container">
+            <h2>Pattern Tables</h2>
+            <form>
+                <input type="color" id="pattern-table-color0" name="pattern-table-color0" value="#5c94fc">
+                <input type="color" id="pattern-table-color1" name="pattern-table-color1" value="#fcbdb1">
+                <input type="color" id="pattern-table-color2" name="pattern-table-color2" value="#c84c0c">
+                <input type="color" id="pattern-table-color3" name="pattern-table-color3" value="#010100">
+            </form>
+            <h4>Pattern table 0000</h4>
+            <canvas id="pattern-table1" width="128" height="128" ></canvas>
+            <h4>Pattern table 1000</h4>
+            <canvas id="pattern-table2" width="128" height="128" ></canvas>
+
+        </div>
         <div id="game-container">
             <label for="romInput">Select .nes file:</label>
             <input type="file" id="romInput" accept=".nes" />
